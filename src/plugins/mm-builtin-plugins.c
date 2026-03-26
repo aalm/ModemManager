@@ -142,6 +142,9 @@ MMPlugin *mm_plugin_create_wavecom (void);
 #if defined ENABLE_PLUGIN_X22X
 MMPlugin *mm_plugin_create_x22x (void);
 #endif
+#if defined ENABLE_PLUGIN_XMM7560
+MMPlugin *mm_plugin_create_xmm7560 (void);
+#endif
 #if defined ENABLE_PLUGIN_ZTE
 MMPlugin *mm_plugin_create_zte (void);
 #endif
