@@ -283,6 +283,27 @@ if plugins_shared['xmm']
   }}
 endif
 
+# plugin: xmm7560
+if plugins_options['xmm7560']
+  test_udev_rules_dir_c_args = ['-DTESTUDEVRULESDIR_XMM7560="@0@"'.format(plugins_dir / 'xmm7560')]
+  plugins_test_udev_rules_dir_c_args += test_udev_rules_dir_c_args
+
+  common_c_args = test_udev_rules_dir_c_args + ['-DMM_MODULE_NAME="xmm7560"']
+
+  sources = files(
+    'xmm7560/mm-broadband-bearer-xmm7560.c',
+    'xmm7560/mm-broadband-modem-xmm7560.c',
+    'xmm7560/mm-plugin-xmm7560.c',
+  )
+
+  plugins += {'plugin-xmm7560': {
+    'plugin': true,
+    'module': {'sources': sources, 'include_directories': plugins_incs + [xmm_inc, fibocom_inc], 'c_args': common_c_args},
+  }}
+
+  plugins_udev_rules += files('xmm7560/77-mm-xmm7560-port-types.rules')
+endif
+
 # common quectel support library
 if plugins_shared['quectel']
   quectel_inc = include_directories('quectel')
