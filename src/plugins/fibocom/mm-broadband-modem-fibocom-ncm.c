@@ -15,8 +15,8 @@
 
 #include <config.h>
 
-#include "mm-broadband-modem-xmm7560.h"
-#include "mm-broadband-bearer-xmm7560.h"
+#include "mm-broadband-modem-fibocom-ncm.h"
+#include "mm-broadband-bearer-fibocom-ncm.h"
 #include "mm-broadband-modem.h"
 #include "mm-base-modem-at.h"
 #include "mm-iface-modem.h"
@@ -33,7 +33,7 @@ static void iface_modem_signal_init               (MMIfaceModemSignalInterface  
 static MMIfaceModemLocationInterface           *iface_modem_location_parent;
 static MMIfaceModem3gppProfileManagerInterface *iface_modem_3gpp_profile_manager_parent;
 
-G_DEFINE_TYPE_EXTENDED (MMBroadbandModemXmm7560, mm_broadband_modem_xmm7560, MM_TYPE_BROADBAND_MODEM, 0,
+G_DEFINE_TYPE_EXTENDED (MMBroadbandModemFibocomNcm, mm_broadband_modem_fibocom_ncm, MM_TYPE_BROADBAND_MODEM, 0,
                         G_IMPLEMENT_INTERFACE (MM_TYPE_IFACE_MODEM, iface_modem_init)
                         G_IMPLEMENT_INTERFACE (MM_TYPE_IFACE_MODEM_3GPP_PROFILE_MANAGER, iface_modem_3gpp_profile_manager_init)
                         G_IMPLEMENT_INTERFACE (MM_TYPE_IFACE_MODEM_SIGNAL, iface_modem_signal_init)
@@ -116,14 +116,14 @@ modem_create_bearer_finish (MMIfaceModem *self,
 }
 
 static void
-broadband_bearer_xmm7560_new_ready (GObject *source,
+broadband_bearer_fibocom_ncm_new_ready (GObject *source,
                                     GAsyncResult *res,
                                     GTask *task)
 {
     MMBaseBearer *bearer = NULL;
     GError       *error = NULL;
 
-    bearer = mm_broadband_bearer_xmm7560_new_finish (res, &error);
+    bearer = mm_broadband_bearer_fibocom_ncm_new_finish (res, &error);
     if (!bearer)
         g_task_return_error (task, error);
     else
@@ -142,25 +142,25 @@ modem_create_bearer (MMIfaceModem       *self,
     task = g_task_new (self, NULL, callback, user_data);
     g_task_set_task_data (task, g_object_ref (properties), g_object_unref);
 
-    mm_obj_dbg (self, "creating XMM7560 bearer");
-    mm_broadband_bearer_xmm7560_new (MM_BROADBAND_MODEM_XMM7560 (self),
+    mm_obj_dbg (self, "creating FIBOCOM_NCM bearer");
+    mm_broadband_bearer_fibocom_ncm_new (MM_BROADBAND_MODEM_FIBOCOM_NCM (self),
                                      properties,
                                      NULL, /* cancellable */
-                                     (GAsyncReadyCallback) broadband_bearer_xmm7560_new_ready,
+                                     (GAsyncReadyCallback) broadband_bearer_fibocom_ncm_new_ready,
                                      task);
 }
 
 /*****************************************************************************/
 
-MMBroadbandModemXmm7560 *
-mm_broadband_modem_xmm7560_new (const gchar  *device,
+MMBroadbandModemFibocomNcm *
+mm_broadband_modem_fibocom_ncm_new (const gchar  *device,
                                 const gchar  *physdev,
                                 const gchar **drivers,
                                 const gchar  *plugin,
                                 guint16       vendor_id,
                                 guint16       product_id)
 {
-    return g_object_new (MM_TYPE_BROADBAND_MODEM_XMM7560,
+    return g_object_new (MM_TYPE_BROADBAND_MODEM_FIBOCOM_NCM,
                          MM_BASE_MODEM_DEVICE,     device,
                          MM_BASE_MODEM_PHYSDEV,    physdev,
                          MM_BASE_MODEM_DRIVERS,    drivers,
@@ -173,7 +173,7 @@ mm_broadband_modem_xmm7560_new (const gchar  *device,
 }
 
 static void
-mm_broadband_modem_xmm7560_init (MMBroadbandModemXmm7560 *self)
+mm_broadband_modem_fibocom_ncm_init (MMBroadbandModemFibocomNcm *self)
 {
 }
 
@@ -238,7 +238,7 @@ iface_modem_signal_init (MMIfaceModemSignalInterface *iface)
 static MMBroadbandModemClass *
 peek_parent_broadband_modem_class (MMSharedXmm *self)
 {
-    return MM_BROADBAND_MODEM_CLASS (mm_broadband_modem_xmm7560_parent_class);
+    return MM_BROADBAND_MODEM_CLASS (mm_broadband_modem_fibocom_ncm_parent_class);
 }
 
 static MMIfaceModemLocationInterface *
@@ -255,7 +255,7 @@ shared_xmm_init (MMSharedXmmInterface *iface)
 }
 
 static void
-mm_broadband_modem_xmm7560_class_init (MMBroadbandModemXmm7560Class *klass)
+mm_broadband_modem_fibocom_ncm_class_init (MMBroadbandModemFibocomNcmClass *klass)
 {
     MMBroadbandModemClass *broadband_modem_class = MM_BROADBAND_MODEM_CLASS (klass);
 
