@@ -15,13 +15,13 @@
 
 #include <config.h>
 
-#include "mm-broadband-bearer-xmm7560.h"
-#include "mm-broadband-modem-xmm7560.h"
+#include "mm-broadband-bearer-fibocom-ncm.h"
+#include "mm-broadband-modem-fibocom-ncm.h"
 #include "mm-base-modem-at.h"
 #include "mm-bind.h"
 #include "mm-log-object.h"
 
-G_DEFINE_TYPE (MMBroadbandBearerXmm7560, mm_broadband_bearer_xmm7560, MM_TYPE_BROADBAND_BEARER)
+G_DEFINE_TYPE (MMBroadbandBearerFibocomNcm, mm_broadband_bearer_fibocom_ncm, MM_TYPE_BROADBAND_BEARER)
 
 /*****************************************************************************/
 /* 3GPP Dialing (sub-step of the 3GPP Connection sequence) */
@@ -65,7 +65,7 @@ cgdata_ready (MMBaseModem  *modem,
               GAsyncResult *res,
               GTask        *task)
 {
-    MMBroadbandBearerXmm7560 *self;
+    MMBroadbandBearerFibocomNcm *self;
     DialContext              *ctx;
     GError                   *error = NULL;
 
@@ -119,7 +119,7 @@ cgcontrdp_ready (MMBaseModem  *modem,
                  GAsyncResult *res,
                  GTask        *task)
 {
-    MMBroadbandBearerXmm7560 *self;
+    MMBroadbandBearerFibocomNcm *self;
     DialContext              *ctx;
     const gchar              *response;
     g_auto(GStrv)             lines = NULL;
@@ -275,7 +275,18 @@ dial_3gpp (MMBroadbandBearer  *self,
         return;
     }
 
-    ctx->xdns_cmd         = g_strdup_printf ("+XDNS=%u,1", cid);
+    /* Select IP family for XDNS command */
+    switch (mm_bearer_properties_get_ip_type (mm_base_bearer_peek_config (MM_BASE_BEARER (self)))) {
+    case MM_BEARER_IP_FAMILY_IPV4V6:
+    default:
+    case MM_BEARER_IP_FAMILY_IPV4:
+        ctx->xdns_cmd = g_strdup_printf ("+XDNS=%u,1", cid);
+        break;
+    case MM_BEARER_IP_FAMILY_IPV6:
+        ctx->xdns_cmd = g_strdup_printf ("+XDNS=%u,2", cid);
+        break;
+    }
+
     ctx->cgact_cmd        = g_strdup_printf ("+CGACT=1,%u", cid);
     ctx->cgcontrdp_cmd    = g_strdup_printf ("+CGCONTRDP=%u", cid);
     ctx->xdatachannel_cmd = g_strdup_printf ("+XDATACHANNEL=1,1,\"/USBCDC/0\",\"/USBHS/NCM/0\",2,%u", cid);
@@ -326,7 +337,7 @@ disconnect_3gpp (MMBroadbandBearer *self,
 {
     GTask *task;
     gchar *cmd;
-    MMBroadbandBearerXmm7560 *xmm_self = MM_BROADBAND_BEARER_XMM7560 (self);
+    MMBroadbandBearerFibocomNcm *xmm_self = MM_BROADBAND_BEARER_FIBOCOM_NCM (self);
 
     g_clear_object (&xmm_self->ipv4_config);
     g_clear_object (&xmm_self->ipv6_config);
@@ -352,7 +363,7 @@ get_ip_config_3gpp_finish (MMBroadbandBearer *self,
                            MMBearerIpConfig **ipv6_config,
                            GError **error)
 {
-    MMBroadbandBearerXmm7560 *xmm_self = MM_BROADBAND_BEARER_XMM7560 (self);
+    MMBroadbandBearerFibocomNcm *xmm_self = MM_BROADBAND_BEARER_FIBOCOM_NCM (self);
 
     if (!g_task_propagate_boolean (G_TASK (res), error))
         return FALSE;
@@ -386,7 +397,7 @@ get_ip_config_3gpp (MMBroadbandBearer *self,
 /*****************************************************************************/
 
 MMBaseBearer *
-mm_broadband_bearer_xmm7560_new_finish (GAsyncResult *res,
+mm_broadband_bearer_fibocom_ncm_new_finish (GAsyncResult *res,
                                         GError      **error)
 {
     GObject *bearer;
@@ -404,14 +415,14 @@ mm_broadband_bearer_xmm7560_new_finish (GAsyncResult *res,
 }
 
 void
-mm_broadband_bearer_xmm7560_new (MMBroadbandModemXmm7560 *modem,
+mm_broadband_bearer_fibocom_ncm_new (MMBroadbandModemFibocomNcm *modem,
                                  MMBearerProperties      *properties,
                                  GCancellable            *cancellable,
                                  GAsyncReadyCallback      callback,
                                  gpointer                 user_data)
 {
     g_async_initable_new_async (
-        MM_TYPE_BROADBAND_BEARER_XMM7560,
+        MM_TYPE_BROADBAND_BEARER_FIBOCOM_NCM,
         G_PRIORITY_DEFAULT,
         cancellable,
         callback,
@@ -423,19 +434,19 @@ mm_broadband_bearer_xmm7560_new (MMBroadbandModemXmm7560 *modem,
 }
 
 static void
-mm_broadband_bearer_xmm7560_init (MMBroadbandBearerXmm7560 *self)
+mm_broadband_bearer_fibocom_ncm_init (MMBroadbandBearerFibocomNcm *self)
 {
 }
 
 static void
 dispose (GObject *object)
 {
-    MMBroadbandBearerXmm7560 *self = MM_BROADBAND_BEARER_XMM7560 (object);
+    MMBroadbandBearerFibocomNcm *self = MM_BROADBAND_BEARER_FIBOCOM_NCM (object);
 
     g_clear_object (&self->ipv4_config);
     g_clear_object (&self->ipv6_config);
 
-    G_OBJECT_CLASS (mm_broadband_bearer_xmm7560_parent_class)->dispose (object);
+    G_OBJECT_CLASS (mm_broadband_bearer_fibocom_ncm_parent_class)->dispose (object);
 }
 
 static MMBearerConnectionStatus
@@ -460,7 +471,7 @@ load_connection_status (MMBaseBearer        *self,
 }
 
 static void
-mm_broadband_bearer_xmm7560_class_init (MMBroadbandBearerXmm7560Class *klass)
+mm_broadband_bearer_fibocom_ncm_class_init (MMBroadbandBearerFibocomNcmClass *klass)
 {
     GObjectClass *object_class = G_OBJECT_CLASS (klass);
     MMBaseBearerClass *base_bearer_class = MM_BASE_BEARER_CLASS (klass);

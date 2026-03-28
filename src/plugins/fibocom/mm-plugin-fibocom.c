@@ -24,6 +24,7 @@
 #include "mm-broadband-modem.h"
 #include "mm-broadband-modem-xmm.h"
 #include "mm-broadband-modem-fibocom.h"
+#include "mm-broadband-modem-fibocom-ncm.h"
 
 #if defined WITH_MBIM
 #include "mm-broadband-modem-mbim.h"
@@ -53,6 +54,16 @@ create_modem (MMPlugin     *self,
               GList        *probes,
               GError      **error)
 {
+    if (vendor == 0x8087 && product == 0x095a) {
+        mm_obj_dbg (self, "NCM-powered XMM-based Fibocom modem found...");
+        return MM_BASE_MODEM (mm_broadband_modem_fibocom_ncm_new (uid,
+                                                                  physdev,
+                                                                  drivers,
+                                                                  mm_plugin_get_name (self),
+                                                                  vendor,
+                                                                  product));
+    }
+
 #if defined WITH_MBIM
     if (mm_port_probe_list_has_mbim_port (probes)) {
         if (mm_port_probe_list_is_xmm (probes)) {
