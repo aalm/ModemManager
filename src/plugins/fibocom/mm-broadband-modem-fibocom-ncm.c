@@ -14,95 +14,115 @@
  */
 
 #include <config.h>
+#include <stdlib.h>
 
 #include "mm-broadband-modem-fibocom-ncm.h"
 #include "mm-broadband-bearer-fibocom-ncm.h"
 #include "mm-broadband-modem.h"
 #include "mm-base-modem-at.h"
 #include "mm-iface-modem.h"
+#include "mm-iface-modem-signal.h"
 #include "mm-iface-modem-3gpp-profile-manager.h"
 #include "mm-log-object.h"
 #include "mm-shared-xmm.h"
+#include "mm-modem-helpers-xmm.h"
+#include "mm-modem-helpers.h"
 
 static void iface_modem_init                      (MMIfaceModemInterface                   *iface);
-static void iface_modem_3gpp_profile_manager_init (MMIfaceModem3gppProfileManagerInterface *iface);
 static void iface_modem_location_init             (MMIfaceModemLocationInterface           *iface);
 static void shared_xmm_init                       (MMSharedXmmInterface                    *iface);
 static void iface_modem_signal_init               (MMIfaceModemSignalInterface             *iface);
 
 static MMIfaceModemLocationInterface           *iface_modem_location_parent;
-static MMIfaceModem3gppProfileManagerInterface *iface_modem_3gpp_profile_manager_parent;
+static MMIfaceModemInterface                   *iface_modem_parent;
+
+/*****************************************************************************/
+/* Signal Quality Helpers */
+
+static void
+update_signal_quality (MMBroadbandModemFibocomNcm *self,
+                       guint                       rxlev,
+                       guint                       rscp,
+                       guint                       rsrp)
+{
+    guint quality = 0;
+
+    if (rsrp <= 97) {
+        quality = (guint) (rsrp * 100 / 97);
+    } else if (rxlev <= 63) {
+        quality = (guint) (rxlev * 100 / 63);
+    } else if (rscp <= 96) {
+        quality = (guint) (rscp * 100 / 96);
+    }
+
+    if (quality > 0)
+        mm_iface_modem_update_signal_quality (MM_IFACE_MODEM (self), quality);
+}
+
+/*****************************************************************************/
+/* Signal Quality loading (Modem interface) */
+
+static guint
+load_signal_quality_finish (MMIfaceModem  *self,
+                            GAsyncResult  *res,
+                            GError       **error)
+{
+    const gchar *response;
+    guint        rxlev = 0;
+    guint        ber = 0;
+    guint        rscp = 0;
+    guint        ecn0 = 0;
+    guint        rsrq = 0;
+    guint        rsrp = 0;
+    gint         rssnr = 0;
+    MMSignal    *gsm = NULL;
+    MMSignal    *umts = NULL;
+    MMSignal    *lte = NULL;
+
+    response = mm_base_modem_at_command_finish (MM_BASE_MODEM (self), res, error);
+    if (!response || !mm_xmm_parse_xcesq_query_response (response,
+                                                         &rxlev, &ber,
+                                                         &rscp, &ecn0,
+                                                         &rsrq, &rsrp,
+                                                         &rssnr, error))
+        return 0;
+
+    /* Update Signal interface if we have the info */
+    if (mm_xmm_xcesq_response_to_signal_info (response, self, &gsm, &umts, &lte, NULL)) {
+        mm_iface_modem_signal_update (MM_IFACE_MODEM_SIGNAL (self), NULL, NULL, gsm, umts, lte, NULL);
+        g_clear_object (&gsm);
+        g_clear_object (&umts);
+        g_clear_object (&lte);
+    }
+
+    if (rsrp <= 97)
+        return (guint) (rsrp * 100 / 97);
+    if (rxlev <= 63)
+        return (guint) (rxlev * 100 / 63);
+    if (rscp <= 96)
+        return (guint) (rscp * 100 / 96);
+
+    return 0;
+}
+
+static void
+load_signal_quality (MMIfaceModem        *self,
+                     GAsyncReadyCallback  callback,
+                     gpointer             user_data)
+{
+    mm_base_modem_at_command (MM_BASE_MODEM (self),
+                              "+XCESQ?",
+                              3,
+                              FALSE,
+                              callback,
+                              user_data);
+}
 
 G_DEFINE_TYPE_EXTENDED (MMBroadbandModemFibocomNcm, mm_broadband_modem_fibocom_ncm, MM_TYPE_BROADBAND_MODEM, 0,
                         G_IMPLEMENT_INTERFACE (MM_TYPE_IFACE_MODEM, iface_modem_init)
-                        G_IMPLEMENT_INTERFACE (MM_TYPE_IFACE_MODEM_3GPP_PROFILE_MANAGER, iface_modem_3gpp_profile_manager_init)
                         G_IMPLEMENT_INTERFACE (MM_TYPE_IFACE_MODEM_SIGNAL, iface_modem_signal_init)
                         G_IMPLEMENT_INTERFACE (MM_TYPE_IFACE_MODEM_LOCATION, iface_modem_location_init)
                         G_IMPLEMENT_INTERFACE (MM_TYPE_SHARED_XMM,  shared_xmm_init))
-
-/*****************************************************************************/
-/* Profile manager interface */
-
-static gboolean
-modem_3gpp_profile_manager_check_format_finish (MMIfaceModem3gppProfileManager  *self,
-                                                GAsyncResult                    *res,
-                                                gboolean                        *new_id,
-                                                gint                            *min_profile_id,
-                                                gint                            *max_profile_id,
-                                                GEqualFunc                      *apn_cmp,
-                                                MM3gppProfileCmpFlags           *profile_cmp_flags,
-                                                GError                         **error)
-{
-    if (!g_task_propagate_boolean (G_TASK (res), error))
-        return FALSE;
-
-    if (new_id)
-        *new_id = TRUE;
-    if (min_profile_id)
-        *min_profile_id = 1;
-    if (max_profile_id)
-        *max_profile_id = 1;
-    if (apn_cmp)
-        *apn_cmp = (GEqualFunc) mm_3gpp_cmp_apn_name;
-    if (profile_cmp_flags)
-        *profile_cmp_flags = (MM_3GPP_PROFILE_CMP_FLAGS_NO_AUTH |
-                              MM_3GPP_PROFILE_CMP_FLAGS_NO_APN_TYPE |
-                              MM_3GPP_PROFILE_CMP_FLAGS_NO_ACCESS_TYPE_PREFERENCE |
-                              MM_3GPP_PROFILE_CMP_FLAGS_NO_ROAMING_ALLOWANCE |
-                              MM_3GPP_PROFILE_CMP_FLAGS_NO_PROFILE_SOURCE);
-    return TRUE;
-}
-
-static void
-modem_3gpp_profile_manager_check_format (MMIfaceModem3gppProfileManager *self,
-                                         MMBearerIpFamily                ip_type,
-                                         GAsyncReadyCallback             callback,
-                                         gpointer                        user_data)
-{
-    GTask *task;
-
-    task = g_task_new (self, NULL, callback, user_data);
-    g_task_return_boolean (task, TRUE);
-    g_object_unref (task);
-}
-
-static void
-iface_modem_3gpp_profile_manager_init (MMIfaceModem3gppProfileManagerInterface *iface)
-{
-    iface_modem_3gpp_profile_manager_parent = g_type_interface_peek_parent (iface);
-
-    iface->check_format = modem_3gpp_profile_manager_check_format;
-    iface->check_format_finish = modem_3gpp_profile_manager_check_format_finish;
-
-    iface->list_profiles = iface_modem_3gpp_profile_manager_parent->list_profiles;
-    iface->list_profiles_finish = iface_modem_3gpp_profile_manager_parent->list_profiles_finish;
-    iface->get_profile = iface_modem_3gpp_profile_manager_parent->get_profile;
-    iface->get_profile_finish = iface_modem_3gpp_profile_manager_parent->get_profile_finish;
-    iface->store_profile = iface_modem_3gpp_profile_manager_parent->store_profile;
-    iface->store_profile_finish = iface_modem_3gpp_profile_manager_parent->store_profile_finish;
-    iface->delete_profile = iface_modem_3gpp_profile_manager_parent->delete_profile;
-    iface->delete_profile_finish = iface_modem_3gpp_profile_manager_parent->delete_profile_finish;
-}
 
 /*****************************************************************************/
 /* Create Bearer (Modem interface) */
@@ -150,6 +170,88 @@ modem_create_bearer (MMIfaceModem       *self,
                                      task);
 }
 
+static void
+xcesqi_urc_received (MMPortSerialAt             *port,
+                     GMatchInfo                 *match_info,
+                     MMBroadbandModemFibocomNcm *self)
+{
+    guint     rxlev, ber, rscp, ecn0, rsrq, rsrp;
+    gint      rssnr;
+    gchar    *content;
+    gchar   **split;
+    MMSignal *gsm = NULL;
+    MMSignal *umts = NULL;
+    MMSignal *lte = NULL;
+    gchar    *response;
+
+    content = g_match_info_fetch (match_info, 1);
+    if (!content)
+        return;
+
+    mm_obj_dbg (self, "received +XCESQI URC: %s", content);
+
+    split = g_strsplit (content, ",", -1);
+    if (g_strv_length (split) >= 7) {
+        rxlev = atoi (split[0]);
+        ber   = atoi (split[1]);
+        rscp  = atoi (split[2]);
+        ecn0  = atoi (split[3]);
+        rsrq  = atoi (split[4]);
+        rsrp  = atoi (split[5]);
+        rssnr = atoi (split[6]);
+
+        update_signal_quality (self, rxlev, rscp, rsrp);
+
+        /* Also update Signal interface */
+        response = g_strdup_printf ("+XCESQ: 0,%u,%u,%u,%u,%u,%u,%d", rxlev, ber, rscp, ecn0, rsrq, rsrp, rssnr);
+        if (mm_xmm_xcesq_response_to_signal_info (response, self, &gsm, &umts, &lte, NULL)) {
+            mm_iface_modem_signal_update (MM_IFACE_MODEM_SIGNAL (self), NULL, NULL, gsm, umts, lte, NULL);
+            g_clear_object (&gsm);
+            g_clear_object (&umts);
+            g_clear_object (&lte);
+        }
+        g_free (response);
+    }
+
+    g_strfreev (split);
+    g_free (content);
+}
+
+static void
+setup_ports (MMBroadbandModem *self)
+{
+    MMPortSerialAt *ports[2];
+    guint           i;
+    GRegex         *xcesqi_regex;
+
+    /* Parent setup first */
+    MM_BROADBAND_MODEM_CLASS (mm_broadband_modem_fibocom_ncm_parent_class)->setup_ports (self);
+
+    /* Loose regex to catch any +XCESQI URC */
+    xcesqi_regex = g_regex_new ("\\+XCESQI:\\s*([^\\r\\n]+)",
+                                G_REGEX_RAW | G_REGEX_OPTIMIZE, 0, NULL);
+
+    ports[0] = mm_base_modem_peek_port_primary   (MM_BASE_MODEM (self));
+    ports[1] = mm_base_modem_peek_port_secondary (MM_BASE_MODEM (self));
+
+    for (i = 0; i < G_N_ELEMENTS (ports); i++) {
+        if (!ports[i])
+            continue;
+        mm_obj_dbg (self, "adding +XCESQI URC handler to port %s", mm_port_get_device (MM_PORT (ports[i])));
+        mm_port_serial_at_add_unsolicited_msg_handler (
+            ports[i],
+            xcesqi_regex,
+            (MMPortSerialAtUnsolicitedMsgFn) xcesqi_urc_received,
+            self,
+            NULL);
+    }
+    g_regex_unref (xcesqi_regex);
+
+    /* Enable signal reporting engine and URCs fire-and-forget */
+    mm_base_modem_at_command (MM_BASE_MODEM (self), "AT+XCESQRC=1", 3, FALSE, NULL, NULL);
+    mm_base_modem_at_command (MM_BASE_MODEM (self), "AT+XCESQ=1", 3, FALSE, NULL, NULL);
+}
+
 /*****************************************************************************/
 
 MMBroadbandModemFibocomNcm *
@@ -180,6 +282,8 @@ mm_broadband_modem_fibocom_ncm_init (MMBroadbandModemFibocomNcm *self)
 static void
 iface_modem_init (MMIfaceModemInterface *iface)
 {
+    iface_modem_parent = g_type_interface_peek_parent (iface);
+
     iface->load_supported_modes        = mm_shared_xmm_load_supported_modes;
     iface->load_supported_modes_finish = mm_shared_xmm_load_supported_modes_finish;
     iface->load_current_modes          = mm_shared_xmm_load_current_modes;
@@ -204,6 +308,9 @@ iface_modem_init (MMIfaceModemInterface *iface)
     iface->modem_power_off_finish  = mm_shared_xmm_power_off_finish;
     iface->reset                   = mm_shared_xmm_reset;
     iface->reset_finish            = mm_shared_xmm_reset_finish;
+
+    iface->load_signal_quality        = load_signal_quality;
+    iface->load_signal_quality_finish = load_signal_quality_finish;
 
     iface->create_bearer        = modem_create_bearer;
     iface->create_bearer_finish = modem_create_bearer_finish;
@@ -259,7 +366,7 @@ mm_broadband_modem_fibocom_ncm_class_init (MMBroadbandModemFibocomNcmClass *klas
 {
     MMBroadbandModemClass *broadband_modem_class = MM_BROADBAND_MODEM_CLASS (klass);
 
-    broadband_modem_class->setup_ports = mm_shared_xmm_setup_ports;
+    broadband_modem_class->setup_ports = setup_ports;
     broadband_modem_class->initialization_started = mm_shared_xmm_initialization_started;
     broadband_modem_class->initialization_started_finish = mm_shared_xmm_initialization_started_finish;
 }

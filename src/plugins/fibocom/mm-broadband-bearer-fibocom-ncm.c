@@ -15,6 +15,9 @@
 
 #include <config.h>
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+
 #include "mm-broadband-bearer-fibocom-ncm.h"
 #include "mm-broadband-modem-fibocom-ncm.h"
 #include "mm-base-modem-at.h"
@@ -114,19 +117,56 @@ xdatachannel_ready (MMBaseModem  *modem,
                               task);
 }
 
+/*****************************************************************************/
+/* CGCONTRDP response parsing */
+
+static guint
+count_bits_set (gulong number)
+{
+    guint c;
+    for (c = 0; number; c++)
+        number &= number - 1;
+    return c;
+}
+
+static guint
+local_netmask_to_cidr (const gchar *netmask)
+{
+    guint32 num = 0;
+    if (inet_pton (AF_INET, netmask, &num) <= 0)
+        return 0;
+    return count_bits_set (num);
+}
+
+static guint
+local_netmask6_to_cidr (const gchar *netmask)
+{
+    struct in6_addr num;
+    guint           i;
+    guint           cidr = 0;
+
+    if (inet_pton (AF_INET6, netmask, &num) <= 0)
+        return 0;
+
+    for (i = 0; i < 16; i++)
+        cidr += count_bits_set (num.s6_addr[i]);
+
+    return cidr;
+}
+
 static void
 cgcontrdp_ready (MMBaseModem  *modem,
                  GAsyncResult *res,
                  GTask        *task)
 {
     MMBroadbandBearerFibocomNcm *self;
-    DialContext              *ctx;
-    const gchar              *response;
-    g_auto(GStrv)             lines = NULL;
-    guint                     i;
-    GError                   *error = NULL;
+    DialContext                 *ctx;
+    const gchar                 *response;
+    g_auto(GStrv)                lines = NULL;
+    guint                        i;
+    GError                      *error = NULL;
 
-    self = g_task_get_source_object (task);
+    self = MM_BROADBAND_BEARER_FIBOCOM_NCM (g_task_get_source_object (task));
     ctx  = g_task_get_task_data (task);
 
     response = mm_base_modem_at_command_finish (modem, res, &error);
@@ -144,6 +184,7 @@ cgcontrdp_ready (MMBaseModem  *modem,
         g_autofree gchar *dns1 = NULL;
         g_autofree gchar *dns2 = NULL;
         MMBearerIpConfig *ip_config = NULL;
+        guint             prefix = 0;
 
         if (!g_str_has_prefix (lines[i], "+CGCONTRDP:"))
             continue;
@@ -165,10 +206,22 @@ cgcontrdp_ready (MMBaseModem  *modem,
                         if (!self->ipv4_config)
                             self->ipv4_config = mm_bearer_ip_config_new ();
                         ip_config = self->ipv4_config;
+                        if (subnet)
+                            prefix = local_netmask_to_cidr (subnet);
+                        /* XXX if we get prefix 8, it's likely a dummy mask (255.0.0.0)
+                         * often seen in Fibocom modems(?). Default to 32. */
+                        if (prefix == 8)
+                            prefix = 32;
                     } else if (g_inet_address_get_family (addr) == G_SOCKET_FAMILY_IPV6) {
                         if (!self->ipv6_config)
                             self->ipv6_config = mm_bearer_ip_config_new ();
                         ip_config = self->ipv6_config;
+                        if (subnet)
+                            prefix = local_netmask6_to_cidr (subnet);
+                        /* XXX if we get prefix 0, or it's a link-local address,
+                         * default to 64. */
+                        if (prefix == 0 || g_inet_address_get_is_link_local (addr))
+                            prefix = 64;
                     }
                     g_object_unref (addr);
                 }
@@ -178,8 +231,8 @@ cgcontrdp_ready (MMBaseModem  *modem,
 
                     mm_bearer_ip_config_set_method (ip_config, MM_BEARER_IP_METHOD_STATIC);
                     mm_bearer_ip_config_set_address (ip_config, local_address);
-                    if (subnet)
-                        mm_bearer_ip_config_set_prefix (ip_config, mm_netmask_to_cidr (subnet));
+                    if (prefix > 0)
+                        mm_bearer_ip_config_set_prefix (ip_config, prefix);
                     if (gateway)
                         mm_bearer_ip_config_set_gateway (ip_config, gateway);
                     if (dns1 || dns2)
@@ -275,11 +328,16 @@ dial_3gpp (MMBroadbandBearer  *self,
         return;
     }
 
-    /* Select IP family for XDNS command */
+    /* Select IP family for XDNS command.
+     * The modem supports:
+     * 1: IPv4
+     * 2: IPv6
+     * If IPV4V6 is requested, default to IPv4 for the DNS request trigger.
+     */
     switch (mm_bearer_properties_get_ip_type (mm_base_bearer_peek_config (MM_BASE_BEARER (self)))) {
     case MM_BEARER_IP_FAMILY_IPV4V6:
-    default:
     case MM_BEARER_IP_FAMILY_IPV4:
+    default:
         ctx->xdns_cmd = g_strdup_printf ("+XDNS=%u,1", cid);
         break;
     case MM_BEARER_IP_FAMILY_IPV6:
