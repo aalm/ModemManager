@@ -1,0 +1,39 @@
+#!/bin/sh
+
+# SPDX-License-Identifier: CC0-1.0
+# 2024 Nero Sinaro <xu.zhang@fibocom.com>
+# 2024 Google, Inc.
+#
+# This is a script given as reference for Fibocom L860-GL modem with usb-only
+# connection to host, and is only necessary without A or B:
+# A. cdc_ncm.c patch for 8087:095a to use wwan_noarp_info instead of wwan_info:
+#	below "{ USB_DEVICE_AND_INTERFACE_INFO(0x8087, 0x095a,"
+#	replace "  .driver_info = (unsigned long)&wwan_info,"
+#	with "  .driver_info = (unsigned long)&wwan_noarp_info,"
+# B. udev rule to apply only on cdc_ncm devices:
+#	ACTION=="add", SUBSYSTEM=="net", DRIVERS=="cdc_ncm", ATTRS{idVendor}=="8087", ATTRS{idProduct}=="095a", RUN+="/usr/bin/ip link set dev %k arp off"
+#
+# Enabling this modem setup script may be done by placing it in the
+# 'modem-setup.d' directory:
+#    - User-provided modem setup scripts are expected in the package system
+#      configuration directory, e.g. /etc/ModemManager/modem-setup.d
+#    - Package-provided modem setup scripts are expected in the package library
+#      directory, e.g. /lib/ModemManager/modem-setup.d
+# Please note that these directories may vary in your system.
+#
+
+# require program name and at least 3 arguments
+[ $# -lt 3 ] && exit 1
+
+# first argument is sysfs path, which is currently ignored.
+#SYSFS_PATH=$1
+shift
+
+# second and next arguments are control+data port names
+for PORT in "$@"; do
+    if echo "$PORT" | grep -q -G "^wwan[0-9]\{1,\}"; then
+	ip link set dev "$PORT" arp off
+    fi
+done
+
+exit 0

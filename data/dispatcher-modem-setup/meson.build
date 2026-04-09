@@ -12,7 +12,8 @@ mm_modemsetupdirpackage = mm_pkglibdir / 'modem-setup.d'
 
 # This is a test file
 examples = files(
-  '0000:0000'
+  '0000:0000',
+  '8087:095a'
 )
 
 install_data(
