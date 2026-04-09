@@ -13,6 +13,10 @@
 # B. udev rule to apply only on cdc_ncm devices:
 #	ACTION=="add", SUBSYSTEM=="net", DRIVERS=="cdc_ncm", ATTRS{idVendor}=="8087", ATTRS{idProduct}=="095a", RUN+="/usr/bin/ip link set dev %k arp off"
 #
+# E.g. setting up this script for a Fibocom L860-GL modem could look like:
+#  $ sudo cp /usr/share/ModemManager/modem-setup.available.d/8087\:095a \
+#            /etc/ModemManager/modem-setup.d/
+#
 # Enabling this modem setup script may be done by placing it in the
 # 'modem-setup.d' directory:
 #    - User-provided modem setup scripts are expected in the package system

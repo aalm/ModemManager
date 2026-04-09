@@ -150,6 +150,7 @@ ATTRS{idVendor}=="8087", ATTRS{idProduct}=="095a", ENV{.MM_USBIFNUM}=="06", SUBS
 ATTRS{idVendor}=="8087", ATTRS{idProduct}=="095a", ENV{.MM_USBIFNUM}=="08", SUBSYSTEM=="net", ENV{ID_MM_PORT_TYPE}="net"
 ATTRS{idVendor}=="8087", ATTRS{idProduct}=="095a", ENV{.MM_USBIFNUM}=="10", SUBSYSTEM=="net", ENV{ID_MM_PORT_TYPE}="net"
 
-ACTION=="add", SUBSYSTEM=="net", DRIVERS=="cdc_ncm", ATTRS{idVendor}=="8087", ATTRS{idProduct}=="095a", RUN+="/usr/bin/ip link set dev %k arp off"
+# unnecessary with patched cdc_ncm to use wwan_noarp_info instead of wwan_info for 8087:095a, just liek some other intel wwan.
+#ACTION=="add", SUBSYSTEM=="net", DRIVERS=="cdc_ncm", ATTRS{idVendor}=="8087", ATTRS{idProduct}=="095a", RUN+="/usr/bin/ip link set dev %k arp off"
 
 LABEL="mm_fibocom_port_types_end"
