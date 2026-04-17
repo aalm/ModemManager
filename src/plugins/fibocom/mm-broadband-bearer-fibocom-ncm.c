@@ -22,6 +22,7 @@
 #include "mm-broadband-modem-fibocom-ncm.h"
 #include "mm-base-modem-at.h"
 #include "mm-bind.h"
+#include "mm-modem-helpers.h"
 #include "mm-log-object.h"
 
 G_DEFINE_TYPE (MMBroadbandBearerFibocomNcm, mm_broadband_bearer_fibocom_ncm, MM_TYPE_BROADBAND_BEARER)
@@ -85,7 +86,6 @@ cgdata_ready (MMBaseModem  *modem,
         g_task_return_new_error (task, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
                                  "Failed to retrieve IP configuration during connection");
     } else {
-        /* Return the data port, as expected by dial_3gpp */
         g_task_return_pointer (task,
                                g_object_ref (ctx->data),
                                g_object_unref);
@@ -121,24 +121,6 @@ xdatachannel_ready (MMBaseModem  *modem,
 /* CGCONTRDP response parsing */
 
 static guint
-count_bits_set (gulong number)
-{
-    guint c;
-    for (c = 0; number; c++)
-        number &= number - 1;
-    return c;
-}
-
-static guint
-local_netmask_to_cidr (const gchar *netmask)
-{
-    guint32 num = 0;
-    if (inet_pton (AF_INET, netmask, &num) <= 0)
-        return 0;
-    return count_bits_set (num);
-}
-
-static guint
 local_netmask6_to_cidr (const gchar *netmask)
 {
     struct in6_addr num;
@@ -149,7 +131,7 @@ local_netmask6_to_cidr (const gchar *netmask)
         return 0;
 
     for (i = 0; i < 16; i++)
-        cidr += count_bits_set (num.s6_addr[i]);
+        cidr += mm_count_bits_set (num.s6_addr[i]);
 
     return cidr;
 }
@@ -207,9 +189,9 @@ cgcontrdp_ready (MMBaseModem  *modem,
                             self->ipv4_config = mm_bearer_ip_config_new ();
                         ip_config = self->ipv4_config;
                         if (subnet)
-                            prefix = local_netmask_to_cidr (subnet);
+                            prefix = mm_netmask_to_cidr (subnet);
                         /* XXX if we get prefix 8, it's likely a dummy mask (255.0.0.0)
-                         * often seen in Fibocom modems(?). Default to 32. */
+                         * often seen in Fibocom modems(?), default to 32. */
                         if (prefix == 8)
                             prefix = 32;
                     } else if (g_inet_address_get_family (addr) == G_SOCKET_FAMILY_IPV6) {
@@ -242,8 +224,6 @@ cgcontrdp_ready (MMBaseModem  *modem,
         }
     }
 
-    /* Continue with sequence regardless of whether we got IP info yet, 
-     * but we'll check it in the final step. */
     mm_base_modem_at_command (modem,
                               ctx->xdatachannel_cmd,
                               10,
@@ -507,27 +487,6 @@ dispose (GObject *object)
     G_OBJECT_CLASS (mm_broadband_bearer_fibocom_ncm_parent_class)->dispose (object);
 }
 
-static MMBearerConnectionStatus
-load_connection_status_finish (MMBaseBearer  *bearer,
-                               GAsyncResult  *res,
-                               GError       **error)
-{
-    g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_UNSUPPORTED, "Connection status loading is unsupported");
-    return MM_BEARER_CONNECTION_STATUS_UNKNOWN;
-}
-
-static void
-load_connection_status (MMBaseBearer        *self,
-                        GAsyncReadyCallback  callback,
-                        gpointer             user_data)
-{
-    GTask *task;
-
-    task = g_task_new (self, NULL, callback, user_data);
-    g_task_return_int (task, MM_BEARER_CONNECTION_STATUS_UNKNOWN);
-    g_object_unref (task);
-}
-
 static void
 mm_broadband_bearer_fibocom_ncm_class_init (MMBroadbandBearerFibocomNcmClass *klass)
 {
@@ -537,8 +496,8 @@ mm_broadband_bearer_fibocom_ncm_class_init (MMBroadbandBearerFibocomNcmClass *kl
 
     object_class->dispose = dispose;
 
-    base_bearer_class->load_connection_status = load_connection_status;
-    base_bearer_class->load_connection_status_finish = load_connection_status_finish;
+    base_bearer_class->load_connection_status = NULL;
+    base_bearer_class->load_connection_status_finish = NULL;
 
     broadband_bearer_class->dial_3gpp = dial_3gpp;
     broadband_bearer_class->dial_3gpp_finish = dial_3gpp_finish;
