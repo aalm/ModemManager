@@ -209,7 +209,13 @@ cgcontrdp_ready (MMBaseModem  *modem,
                 }
 
                 if (ip_config) {
-                    const gchar *dns[3] = { dns1, dns2, NULL };
+                    const gchar *dns[3] = { NULL, NULL, NULL };
+                    guint        n_dns = 0;
+
+                    if (dns1)
+                        dns[n_dns++] = dns1;
+                    if (dns2)
+                        dns[n_dns++] = dns2;
 
                     mm_bearer_ip_config_set_method (ip_config, MM_BEARER_IP_METHOD_STATIC);
                     mm_bearer_ip_config_set_address (ip_config, local_address);
@@ -217,7 +223,7 @@ cgcontrdp_ready (MMBaseModem  *modem,
                         mm_bearer_ip_config_set_prefix (ip_config, prefix);
                     if (gateway)
                         mm_bearer_ip_config_set_gateway (ip_config, gateway);
-                    if (dns1 || dns2)
+                    if (n_dns > 0)
                         mm_bearer_ip_config_set_dns (ip_config, dns);
                 }
             }
@@ -291,6 +297,8 @@ dial_3gpp (MMBroadbandBearer  *self,
 {
     DialContext *ctx;
     GTask       *task;
+    const gchar *data_name;
+    guint        ncm_idx = 0;
 
     ctx          = g_slice_new0 (DialContext);
     ctx->modem   = MM_BROADBAND_MODEM (g_object_ref (modem));
@@ -307,6 +315,10 @@ dial_3gpp (MMBroadbandBearer  *self,
         g_object_unref (task);
         return;
     }
+
+    data_name = mm_port_get_device (ctx->data);
+    if (g_str_has_prefix (data_name, "wwan"))
+        ncm_idx = (guint) g_ascii_strtoull (data_name + 4, NULL, 10);
 
     /* Select IP family for XDNS command.
      * The modem supports:
@@ -327,7 +339,7 @@ dial_3gpp (MMBroadbandBearer  *self,
 
     ctx->cgact_cmd        = g_strdup_printf ("+CGACT=1,%u", cid);
     ctx->cgcontrdp_cmd    = g_strdup_printf ("+CGCONTRDP=%u", cid);
-    ctx->xdatachannel_cmd = g_strdup_printf ("+XDATACHANNEL=1,1,\"/USBCDC/0\",\"/USBHS/NCM/0\",2,%u", cid);
+    ctx->xdatachannel_cmd = g_strdup_printf ("+XDATACHANNEL=1,1,\"/USBCDC/0\",\"/USBHS/NCM/%u\",2,%u", ncm_idx, cid);
     ctx->cgdata_cmd       = g_strdup_printf ("+CGDATA=\"M-RAW_IP\",%u", cid);
 
     mm_base_modem_at_command (modem,
