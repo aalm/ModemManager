@@ -142,6 +142,10 @@ plugin_manager_build_plugins_list (MMPluginManager *self,
 typedef struct _DeviceContext DeviceContext;
 typedef struct _PortContext   PortContext;
 
+static DeviceContext *plugin_manager_peek_device_context      (MMPluginManager *self,
+                                                                 MMDevice        *device);
+static void           device_context_continue_if_timers_elapsed (DeviceContext   *device_context);
+
 static DeviceContext *device_context_ref   (DeviceContext *device_context);
 static void           device_context_unref (DeviceContext *device_context);
 static PortContext   *port_context_ref     (PortContext   *port_context);
@@ -492,11 +496,19 @@ port_context_defer_until_suggested (PortContext *port_context,
         return;
     }
 
-    /* We are deferred until a suggested plugin is given. If last supports task
-     * of a given device is finished without finding a best plugin, this task
-     * will get finished reporting unsupported. */
+    /* We are deferred until a suggested plugin is given. If probing timers have
+     * already elapsed and no active port tasks remain, device_context_continue()
+     * will finish the deferred tasks right away. */
     mm_obj_dbg (self, "task %s: deferring support check until result suggested", port_context->name);
     port_context->defer_until_suggested = TRUE;
+
+    {
+        DeviceContext *device_context;
+
+        device_context = plugin_manager_peek_device_context (self, port_context->device);
+        if (device_context)
+            device_context_continue_if_timers_elapsed (device_context);
+    }
 }
 
 static void
@@ -972,12 +984,10 @@ device_context_set_best_plugin (DeviceContext *device_context,
         mm_obj_dbg (self, "task %s: not supported by any plugin" ,
                     port_context->name);
 
-        /* Tell the device to ignore this port */
+        /* Tell the device to ignore this port; any remaining
+         * deferred-until-suggested probes will be evaluated in
+         * device_context_continue() once probing timers have elapsed. */
         mm_device_ignore_port (device_context->device, port_context->port);
-
-        /* If this is the last valid probe which was running (i.e. the last one
-         * not being deferred-until-suggested), cancel all remaining ones. */
-        device_context_suggest_plugin (device_context, port_context, NULL);
         return;
     }
 
@@ -1090,9 +1100,21 @@ device_context_continue (DeviceContext *device_context)
     g_string_free (s, TRUE);
 
     if (n_active == 0) {
+        if (device_context->min_probing_time_id || device_context->extra_probing_time_id) {
+            mm_obj_dbg (self, "task %s: no active tasks to probe, waiting for probing timers",
+                        device_context->name);
+            return;
+        }
         mm_obj_dbg (self, "task %s: no active tasks to probe", device_context->name);
         device_context_suggest_plugin (device_context, NULL, NULL);
     }
+}
+
+static void
+device_context_continue_if_timers_elapsed (DeviceContext *device_context)
+{
+    if (!device_context->min_probing_time_id && !device_context->extra_probing_time_id)
+        device_context_continue (device_context);
 }
 
 static void

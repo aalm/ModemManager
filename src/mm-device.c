@@ -771,6 +771,11 @@ mm_device_reset_port_probe_list (MMDevice *self)
     GList *l;
 
     mm_obj_dbg (self, "port probe list reset...");
+    if (self->priv->ignored_port_probes) {
+        self->priv->port_probes = g_list_concat (self->priv->port_probes,
+                                                 self->priv->ignored_port_probes);
+        self->priv->ignored_port_probes = NULL;
+    }
     for (l = self->priv->port_probes; l; l = g_list_next (l)) {
         mm_port_probe_reset (MM_PORT_PROBE (l->data));
     }
