@@ -137,7 +137,8 @@ local_netmask6_to_cidr (const gchar *netmask)
 }
 
 static gboolean
-is_valid_non_any_ip_address (const gchar *str)
+is_valid_ip_address (const gchar *str,
+                     gboolean     allow_any)
 {
     g_autoptr(GInetAddress) addr = NULL;
 
@@ -145,7 +146,7 @@ is_valid_non_any_ip_address (const gchar *str)
         return FALSE;
 
     addr = g_inet_address_new_from_string (str);
-    return addr && !g_inet_address_get_is_any (addr);
+    return addr && (allow_any || !g_inet_address_get_is_any (addr));
 }
 
 static void
@@ -193,6 +194,7 @@ cgcontrdp_ready (MMBaseModem  *modem,
                                               NULL)) {
             if (local_address) {
                 g_autoptr(GInetAddress) addr = NULL;
+                MMBearerIpMethod        ip_method = MM_BEARER_IP_METHOD_STATIC;
 
                 addr = g_inet_address_new_from_string (local_address);
                 if (addr && !g_inet_address_get_is_any (addr)) {
@@ -212,10 +214,15 @@ cgcontrdp_ready (MMBaseModem  *modem,
                         ip_config = self->ipv6_config;
                         if (subnet)
                             prefix = local_netmask6_to_cidr (subnet);
-                        /* XXX if we get prefix 0, or it's a link-local address,
-                         * default to 64. */
-                        if (prefix == 0 || g_inet_address_get_is_link_local (addr))
+                        /* Link-local address requires SLAAC/DHCPv6 on the host
+                         * to obtain the global prefix and router. */
+                        if (g_inet_address_get_is_link_local (addr)) {
                             prefix = 64;
+                            ip_method = MM_BEARER_IP_METHOD_DHCP;
+                        } else if (prefix == 0) {
+                            /* XXX if we get prefix 0, default to 64. */
+                            prefix = 64;
+                        }
                     }
                 }
 
@@ -223,17 +230,21 @@ cgcontrdp_ready (MMBaseModem  *modem,
                     const gchar *dns[3] = { NULL, NULL, NULL };
                     guint        n_dns = 0;
 
-                    if (is_valid_non_any_ip_address (dns1))
+                    if (is_valid_ip_address (dns1, FALSE))
                         dns[n_dns++] = dns1;
-                    if (is_valid_non_any_ip_address (dns2))
+                    if (is_valid_ip_address (dns2, FALSE))
                         dns[n_dns++] = dns2;
 
-                    mm_bearer_ip_config_set_method (ip_config, MM_BEARER_IP_METHOD_STATIC);
+                    mm_bearer_ip_config_set_method (ip_config, ip_method);
                     mm_bearer_ip_config_set_address (ip_config, local_address);
                     if (prefix > 0)
                         mm_bearer_ip_config_set_prefix (ip_config, prefix);
-                    if (is_valid_non_any_ip_address (gateway))
+                    if (ip_method == MM_BEARER_IP_METHOD_STATIC && ip_config == self->ipv6_config) {
+                        mm_bearer_ip_config_set_gateway (ip_config,
+                                                         is_valid_ip_address (gateway, TRUE) ? gateway : "::");
+                    } else if (is_valid_ip_address (gateway, FALSE)) {
                         mm_bearer_ip_config_set_gateway (ip_config, gateway);
+                    }
                     if (n_dns > 0)
                         mm_bearer_ip_config_set_dns (ip_config, dns);
                 }
