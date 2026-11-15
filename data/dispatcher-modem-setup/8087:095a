@@ -26,18 +26,37 @@
 # Please note that these directories may vary in your system.
 #
 
-# require program name and at least 3 arguments
-[ $# -lt 3 ] && exit 1
+# require program name and at least 2 arguments
+[ $# -lt 2 ] && exit 1
 
-# first argument is sysfs path, which is currently ignored.
-#SYSFS_PATH=$1
+# first argument is sysfs device path
+SYSFS_PATH=$1
 shift
 
-# second and next arguments are control+data port names
-for PORT in "$@"; do
-    if [ -d "/sys/class/net/$PORT" ]; then
-        ip link set dev "$PORT" arp off
+DONE_PORTS=""
+RC=0
+
+set_noarp() {
+    case " $DONE_PORTS " in
+        *" $1 "*) return 0 ;;
+    esac
+    DONE_PORTS="$DONE_PORTS $1"
+    ip link set dev "$1" arp off || RC=1
+}
+
+# mm-base-manager passes control ports in $@, while network interfaces live under
+# interface subdirs in sysfs (e.g. $SYSFS_PATH/*:*/net/wwan0)
+for NETDEV_PATH in "$SYSFS_PATH"/*/net/*; do
+    if [ -d "$NETDEV_PATH" ]; then
+        set_noarp "${NETDEV_PATH##*/}"
     fi
 done
 
-exit 0
+# also check any port names passed as arguments
+for PORT in "$@"; do
+    if [ -d "/sys/class/net/$PORT" ]; then
+        set_noarp "$PORT"
+    fi
+done
+
+exit "$RC"
