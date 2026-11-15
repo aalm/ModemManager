@@ -594,6 +594,13 @@ static const XCesqResponseTest xcesq_response_tests[] = {
         .gsm_info  = TRUE,  .rxlev = 10, .rssi = -101.0, .ber = 6,
         .umts_info = FALSE, .rscp_level = 255, .ecn0_level = 255,
         .lte_info  = FALSE, .rsrq_level = 255, .rsrp_level = 255, .rssnr_level = 255
+    },
+    {
+        /* 11-field payload with trailing 255s as emitted by L860-GL +XCESQI URCs */
+        .str       = "+XCESQ: 0,99,99,255,255,25,44,27,255,255,255,255",
+        .gsm_info  = FALSE, .rxlev = 99, .ber = 99,
+        .umts_info = FALSE, .rscp_level = 255, .ecn0_level = 255,
+        .lte_info  = TRUE,  .rsrq_level = 25, .rsrq = -7.5, .rsrp_level = 44, .rsrp = -97.0, .rssnr_level = 27, .rssnr = 13.5
     }
 };
 
@@ -759,6 +766,41 @@ static XlcsslpQuery xlcsslp_queries[] = {
 };
 
 static void
+test_xcesq_signal_quality_from_lte (void)
+{
+    g_autoptr(MMSignal) lte = NULL;
+    guint quality = 0;
+
+    g_assert_false (mm_xmm_signal_quality_from_lte (NULL, &quality));
+
+    lte = mm_signal_new ();
+    g_assert_false (mm_xmm_signal_quality_from_lte (lte, &quality));
+
+    /* RSRP only */
+    mm_signal_set_rsrp (lte, -106.0);
+    g_assert_true (mm_xmm_signal_quality_from_lte (lte, &quality));
+    g_assert_cmpuint (quality, ==, 35);
+
+    /* RSRP -106 dBm with SNR 9 dB -> worst of 35 and 50 = 35 */
+    mm_signal_set_snr (lte, 9.0);
+    g_assert_true (mm_xmm_signal_quality_from_lte (lte, &quality));
+    g_assert_cmpuint (quality, ==, 35);
+
+    /* RSRP -101 dBm with SNR -3 dB -> worst of 40 and 31 = 31 */
+    mm_signal_set_rsrp (lte, -101.0);
+    mm_signal_set_snr (lte, -3.0);
+    g_assert_true (mm_xmm_signal_quality_from_lte (lte, &quality));
+    g_assert_cmpuint (quality, ==, 31);
+
+    /* SNR only */
+    g_clear_object (&lte);
+    lte = mm_signal_new ();
+    mm_signal_set_snr (lte, 9.0);
+    g_assert_true (mm_xmm_signal_quality_from_lte (lte, &quality));
+    g_assert_cmpuint (quality, ==, 50);
+}
+
+static void
 test_xlcsslp_queries (void)
 {
     guint i;
@@ -800,6 +842,7 @@ int main (int argc, char **argv)
 
     g_test_add_func ("/MM/xmm/xcesq/query_response", test_xcesq_response);
     g_test_add_func ("/MM/xmm/xcesq/query_response_to_signal", test_xcesq_response_to_signal);
+    g_test_add_func ("/MM/xmm/xcesq/signal_quality_from_lte", test_xcesq_signal_quality_from_lte);
 
     g_test_add_func ("/MM/xmm/xlcslsr/test", test_xlcslsr_test);
 

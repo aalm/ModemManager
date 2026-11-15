@@ -57,6 +57,10 @@ gboolean mm_xmm_xcesq_response_to_signal_info (const gchar  *response,
                                                MMSignal    **out_lte,
                                                GError      **error);
 
+/* Compute LTE signal quality percentage (0-100) from RSRP and SNR */
+gboolean mm_xmm_signal_quality_from_lte (MMSignal *lte,
+                                         guint    *out_quality);
+
 /* AT+XLCSLSR=? response parser */
 gboolean mm_xmm_parse_xlcslsr_test_response (const gchar  *response,
                                              gboolean     *transport_protocol_invalid_supported,

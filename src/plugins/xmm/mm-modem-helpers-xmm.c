@@ -806,6 +806,43 @@ mm_xmm_xcesq_response_to_signal_info (const gchar  *response,
     return TRUE;
 }
 
+/**
+ * mm_xmm_signal_quality_from_lte:
+ * @lte: a #MMSignal containing LTE metrics.
+ * @out_quality: (out) (optional): computed quality percentage (0-100).
+ *
+ * Computes LTE signal quality over the full 3GPP RSRP and SNR ranges,
+ * returning the worse of both if available.
+ */
+gboolean
+mm_xmm_signal_quality_from_lte (MMSignal *lte,
+                                guint    *out_quality)
+{
+    gdouble rsrp;
+    gdouble snr;
+    guint   quality = 101;
+
+    if (!lte)
+        return FALSE;
+
+    /* Use RSRP and SNR over their full 3GPP ranges and take the worse of both. */
+    rsrp = mm_signal_get_rsrp (lte);
+    if (rsrp != MM_SIGNAL_UNKNOWN)
+        quality = MIN (quality, mm_signal_quality_from_range (rsrp, MM_RSRP_QUALITY_MIN, MM_RSRP_QUALITY_MAX));
+
+    snr = mm_signal_get_snr (lte);
+    if (snr != MM_SIGNAL_UNKNOWN)
+        quality = MIN (quality, mm_signal_quality_from_range (snr, MM_SNR_QUALITY_MIN, MM_SNR_QUALITY_MAX));
+
+    if (quality > 100)
+        return FALSE;
+
+    if (out_quality)
+        *out_quality = quality;
+
+    return TRUE;
+}
+
 /*****************************************************************************/
 /* AT+XLCSLSR=? response parser */
 

@@ -687,9 +687,7 @@ xcesq_signal_quality_ready (MMBaseModem  *self,
     g_autoptr(MMSignal)  gsm = NULL;
     g_autoptr(MMSignal)  umts = NULL;
     g_autoptr(MMSignal)  lte = NULL;
-    gdouble              rsrp;
-    gdouble              snr;
-    guint                quality = 101;
+    guint                quality = 0;
 
     priv = get_private (MM_SHARED_XMM (self));
 
@@ -700,21 +698,11 @@ xcesq_signal_quality_ready (MMBaseModem  *self,
     response = mm_base_modem_at_command_finish (self, res, NULL);
     if (response &&
         mm_xmm_xcesq_response_to_signal_info (response, self, &gsm, &umts, &lte, NULL) &&
-        lte) {
-        rsrp = mm_signal_get_rsrp (lte);
-        if (rsrp != MM_SIGNAL_UNKNOWN)
-            quality = MIN (quality, mm_signal_quality_from_range (rsrp, MM_RSRP_QUALITY_MIN, MM_RSRP_QUALITY_MAX));
-
-        snr = mm_signal_get_snr (lte);
-        if (snr != MM_SIGNAL_UNKNOWN)
-            quality = MIN (quality, mm_signal_quality_from_range (snr, MM_SNR_QUALITY_MIN, MM_SNR_QUALITY_MAX));
-
-        if (quality <= 100) {
-            mm_obj_dbg (self, "signal quality from LTE RSRP/SNR: %u%%", quality);
-            g_task_return_int (task, quality);
-            g_object_unref (task);
-            return;
-        }
+        mm_xmm_signal_quality_from_lte (lte, &quality)) {
+        mm_obj_dbg (self, "signal quality from LTE RSRP/SNR: %u%%", quality);
+        g_task_return_int (task, quality);
+        g_object_unref (task);
+        return;
     }
 
     /* No LTE values (other access technology, or +XCESQ failed): use the
