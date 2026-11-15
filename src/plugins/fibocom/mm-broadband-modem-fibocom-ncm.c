@@ -14,7 +14,6 @@
  */
 
 #include <config.h>
-#include <stdlib.h>
 
 #include "mm-broadband-modem-fibocom-ncm.h"
 #include "mm-broadband-bearer-fibocom-ncm.h"
@@ -22,7 +21,6 @@
 #include "mm-base-modem-at.h"
 #include "mm-iface-modem.h"
 #include "mm-iface-modem-signal.h"
-#include "mm-iface-modem-3gpp-profile-manager.h"
 #include "mm-log-object.h"
 #include "mm-shared-xmm.h"
 #include "mm-modem-helpers-xmm.h"
@@ -95,14 +93,13 @@ xcesqi_urc_received (MMPortSerialAt             *port,
                      GMatchInfo                 *match_info,
                      MMBroadbandModemFibocomNcm *self)
 {
-    guint     rxlev, ber, rscp, ecn0, rsrq, rsrp, quality;
-    gint      rssnr;
-    gchar    *content;
-    gchar   **split;
-    MMSignal *gsm = NULL;
-    MMSignal *umts = NULL;
-    MMSignal *lte = NULL;
-    gchar    *response;
+    g_autofree gchar    *content = NULL;
+    g_autofree gchar    *response = NULL;
+    g_autoptr(MMSignal)  gsm = NULL;
+    g_autoptr(MMSignal)  umts = NULL;
+    g_autoptr(MMSignal)  lte = NULL;
+    guint                quality = 0;
+    gboolean             has_quality = FALSE;
 
     content = g_match_info_fetch (match_info, 1);
     if (!content)
@@ -110,56 +107,53 @@ xcesqi_urc_received (MMPortSerialAt             *port,
 
     mm_obj_dbg (self, "received +XCESQI URC: %s", content);
 
-    split = g_strsplit (content, ",", -1);
-    if (g_strv_length (split) >= 7) {
-        rxlev = atoi (split[0]);
-        ber   = atoi (split[1]);
-        rscp  = atoi (split[2]);
-        ecn0  = atoi (split[3]);
-        rsrq  = atoi (split[4]);
-        rsrp  = atoi (split[5]);
-        rssnr = atoi (split[6]);
+    /* Prefix with mode "0," so the tested +XCESQ response parser can decode the URC payload */
+    response = g_strdup_printf ("+XCESQ: 0,%s", content);
+    if (!mm_xmm_xcesq_response_to_signal_info (response, self, &gsm, &umts, &lte, NULL))
+        return;
 
-        if (rsrp <= 97)
-            quality = (guint) (rsrp * 100 / 97);
-        else if (rxlev <= 63)
-            quality = (guint) (rxlev * 100 / 63);
-        else if (rscp <= 96)
-            quality = (guint) (rscp * 100 / 96);
-        else
-            quality = 0;
+    if (mm_xmm_signal_quality_from_lte (lte, &quality)) {
+        has_quality = TRUE;
+    } else if (umts) {
+        gdouble rscp = mm_signal_get_rscp (umts);
 
-        if (quality > 0)
-            mm_iface_modem_update_signal_quality (MM_IFACE_MODEM (self), quality);
-
-        /* Also update Signal interface */
-        response = g_strdup_printf ("+XCESQ: 0,%u,%u,%u,%u,%u,%u,%d", rxlev, ber, rscp, ecn0, rsrq, rsrp, rssnr);
-        if (mm_xmm_xcesq_response_to_signal_info (response, self, &gsm, &umts, &lte, NULL)) {
-            mm_iface_modem_signal_update (MM_IFACE_MODEM_SIGNAL (self), NULL, NULL, gsm, umts, lte, NULL);
-            g_clear_object (&gsm);
-            g_clear_object (&umts);
-            g_clear_object (&lte);
+        if (rscp != MM_SIGNAL_UNKNOWN) {
+            quality = mm_signal_quality_from_range (rscp, -120, -25);
+            has_quality = TRUE;
         }
-        g_free (response);
+    } else if (gsm) {
+        gdouble rssi = mm_signal_get_rssi (gsm);
+
+        if (rssi != MM_SIGNAL_UNKNOWN) {
+            quality = MM_RSSI_TO_QUALITY (rssi);
+            has_quality = TRUE;
+        }
     }
 
-    g_strfreev (split);
-    g_free (content);
+    if (has_quality)
+        mm_iface_modem_update_signal_quality (MM_IFACE_MODEM (self), quality);
+
+    /* Also update Signal interface */
+    mm_iface_modem_signal_update (MM_IFACE_MODEM_SIGNAL (self), NULL, NULL, gsm, umts, lte, NULL);
 }
 
 static void
 setup_ports (MMBroadbandModem *self)
 {
-    MMPortSerialAt *ports[2];
-    guint           i;
-    GRegex         *xcesqi_regex;
+    MMPortSerialAt    *ports[2];
+    guint              i;
+    g_autoptr(GRegex)  xcesqi_regex = NULL;
+    g_autoptr(GRegex)  sim_ready_regex = NULL;
 
-    /* Parent setup first */
-    MM_BROADBAND_MODEM_CLASS (mm_broadband_modem_fibocom_ncm_parent_class)->setup_ports (self);
+    /* Parent XMM/base setup first */
+    mm_shared_xmm_setup_ports (self);
 
     /* Loose regex to catch any +XCESQI URC */
     xcesqi_regex = g_regex_new ("\\+XCESQI:\\s*([^\\r\\n]+)",
                                 G_REGEX_RAW | G_REGEX_OPTIMIZE, 0, NULL);
+    /* Ignore +SIM READY URCs */
+    sim_ready_regex = g_regex_new ("\\r\\n\\+SIM READY\\r\\n",
+                                   G_REGEX_RAW | G_REGEX_OPTIMIZE, 0, NULL);
 
     ports[0] = mm_base_modem_peek_port_primary   (MM_BASE_MODEM (self));
     ports[1] = mm_base_modem_peek_port_secondary (MM_BASE_MODEM (self));
@@ -174,8 +168,11 @@ setup_ports (MMBroadbandModem *self)
             (MMPortSerialAtUnsolicitedMsgFn) xcesqi_urc_received,
             self,
             NULL);
+        mm_port_serial_at_add_unsolicited_msg_handler (
+            ports[i],
+            sim_ready_regex,
+            NULL, NULL, NULL);
     }
-    g_regex_unref (xcesqi_regex);
 
     /* Enable signal reporting engine(55sec interval) and URCs fire-and-forget. */
     mm_base_modem_at_command (MM_BASE_MODEM (self), "AT+XCESQRC=1,2,0,0,0,0,0,0,0,55", 3, FALSE, NULL, NULL);
@@ -201,6 +198,8 @@ mm_broadband_modem_fibocom_ncm_new (const gchar  *device,
                          MM_BASE_MODEM_PRODUCT_ID, product_id,
                          MM_BASE_MODEM_DATA_NET_SUPPORTED, TRUE,
                          MM_BASE_MODEM_DATA_TTY_SUPPORTED, TRUE,
+                         /* Load initial signal via +XCESQ? and rely on +XCESQI URCs afterwards */
+                         MM_IFACE_MODEM_PERIODIC_SIGNAL_CHECK_DISABLED, TRUE,
                          NULL);
 }
 
@@ -239,9 +238,8 @@ iface_modem_init (MMIfaceModemInterface *iface)
     iface->reset                   = mm_shared_xmm_reset;
     iface->reset_finish            = mm_shared_xmm_reset_finish;
 
-    /* Does rely on +XCESQI URC to update signal without polling */
-    iface->load_signal_quality        = NULL;
-    iface->load_signal_quality_finish = NULL;
+    iface->load_signal_quality        = mm_shared_xmm_load_signal_quality;
+    iface->load_signal_quality_finish = mm_shared_xmm_load_signal_quality_finish;
 
     iface->create_bearer        = modem_create_bearer;
     iface->create_bearer_finish = modem_create_bearer_finish;
@@ -285,11 +283,18 @@ peek_parent_location_interface (MMSharedXmm *self)
     return iface_modem_location_parent;
 }
 
+static MMIfaceModemInterface *
+peek_parent_modem_interface (MMSharedXmm *self)
+{
+    return iface_modem_parent;
+}
+
 static void
 shared_xmm_init (MMSharedXmmInterface *iface)
 {
     iface->peek_parent_broadband_modem_class = peek_parent_broadband_modem_class;
     iface->peek_parent_location_interface    = peek_parent_location_interface;
+    iface->peek_parent_modem_interface       = peek_parent_modem_interface;
 }
 
 static void

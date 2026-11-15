@@ -35,8 +35,8 @@ shift
 
 # second and next arguments are control+data port names
 for PORT in "$@"; do
-    if echo "$PORT" | grep -q -G "^wwan[0-9]\{1,\}"; then
-	ip link set dev "$PORT" arp off
+    if [ -d "/sys/class/net/$PORT" ]; then
+        ip link set dev "$PORT" arp off
     fi
 done
 

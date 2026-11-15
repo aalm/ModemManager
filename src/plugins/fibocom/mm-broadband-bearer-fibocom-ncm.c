@@ -136,6 +136,18 @@ local_netmask6_to_cidr (const gchar *netmask)
     return cidr;
 }
 
+static gboolean
+is_valid_non_any_ip_address (const gchar *str)
+{
+    g_autoptr(GInetAddress) addr = NULL;
+
+    if (!str || !*str)
+        return FALSE;
+
+    addr = g_inet_address_new_from_string (str);
+    return addr && !g_inet_address_get_is_any (addr);
+}
+
 static void
 cgcontrdp_ready (MMBaseModem  *modem,
                  GAsyncResult *res,
@@ -180,10 +192,10 @@ cgcontrdp_ready (MMBaseModem  *modem,
                                               &dns2,
                                               NULL)) {
             if (local_address) {
-                GInetAddress *addr;
+                g_autoptr(GInetAddress) addr = NULL;
 
                 addr = g_inet_address_new_from_string (local_address);
-                if (addr) {
+                if (addr && !g_inet_address_get_is_any (addr)) {
                     if (g_inet_address_get_family (addr) == G_SOCKET_FAMILY_IPV4) {
                         if (!self->ipv4_config)
                             self->ipv4_config = mm_bearer_ip_config_new ();
@@ -205,23 +217,22 @@ cgcontrdp_ready (MMBaseModem  *modem,
                         if (prefix == 0 || g_inet_address_get_is_link_local (addr))
                             prefix = 64;
                     }
-                    g_object_unref (addr);
                 }
 
                 if (ip_config) {
                     const gchar *dns[3] = { NULL, NULL, NULL };
                     guint        n_dns = 0;
 
-                    if (dns1)
+                    if (is_valid_non_any_ip_address (dns1))
                         dns[n_dns++] = dns1;
-                    if (dns2)
+                    if (is_valid_non_any_ip_address (dns2))
                         dns[n_dns++] = dns2;
 
                     mm_bearer_ip_config_set_method (ip_config, MM_BEARER_IP_METHOD_STATIC);
                     mm_bearer_ip_config_set_address (ip_config, local_address);
                     if (prefix > 0)
                         mm_bearer_ip_config_set_prefix (ip_config, prefix);
-                    if (gateway)
+                    if (is_valid_non_any_ip_address (gateway))
                         mm_bearer_ip_config_set_gateway (ip_config, gateway);
                     if (n_dns > 0)
                         mm_bearer_ip_config_set_dns (ip_config, dns);
@@ -286,6 +297,39 @@ xdns_ready (MMBaseModem  *modem,
                               task);
 }
 
+static guint
+get_ncm_channel_index (MMBroadbandBearerFibocomNcm *self,
+                       MMPort                     *data)
+{
+    MMKernelDevice *kernel_device;
+    const gchar    *data_name;
+    gint            usb_iface_num;
+
+    kernel_device = mm_port_peek_kernel_device (data);
+    usb_iface_num = kernel_device ? mm_kernel_device_get_interface_number (kernel_device) : -1;
+
+    switch (usb_iface_num) {
+    case 0x06:
+        return 0;
+    case 0x08:
+        return 1;
+    case 0x0a:
+        return 2;
+    default:
+        break;
+    }
+
+    data_name = mm_port_get_device (data);
+    if (usb_iface_num >= 0)
+        mm_obj_warn (self, "unexpected USB interface number 0x%02x for data port %s, falling back to device name",
+                     usb_iface_num, data_name ? data_name : "(unknown)");
+
+    if (data_name && g_str_has_prefix (data_name, "wwan"))
+        return (guint) g_ascii_strtoull (data_name + 4, NULL, 10);
+
+    return 0;
+}
+
 static void
 dial_3gpp (MMBroadbandBearer  *self,
            MMBaseModem        *modem,
@@ -297,8 +341,7 @@ dial_3gpp (MMBroadbandBearer  *self,
 {
     DialContext *ctx;
     GTask       *task;
-    const gchar *data_name;
-    guint        ncm_idx = 0;
+    guint        ncm_idx;
 
     ctx          = g_slice_new0 (DialContext);
     ctx->modem   = MM_BROADBAND_MODEM (g_object_ref (modem));
@@ -316,9 +359,7 @@ dial_3gpp (MMBroadbandBearer  *self,
         return;
     }
 
-    data_name = mm_port_get_device (ctx->data);
-    if (g_str_has_prefix (data_name, "wwan"))
-        ncm_idx = (guint) g_ascii_strtoull (data_name + 4, NULL, 10);
+    ncm_idx = get_ncm_channel_index (MM_BROADBAND_BEARER_FIBOCOM_NCM (self), ctx->data);
 
     /* Select IP family for XDNS command.
      * The modem supports:
